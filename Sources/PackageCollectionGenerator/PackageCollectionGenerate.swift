@@ -23,7 +23,7 @@ import TSCUtility
 import Utilities
 
 @main
-public struct PackageCollectionGenerate: ParsableCommand {
+public struct PackageCollectionGenerate: AsyncParsableCommand {
     public static let configuration = CommandConfiguration(
         abstract: "Generate a package collection from the given list of packages."
     )
@@ -65,7 +65,7 @@ public struct PackageCollectionGenerate: ParsableCommand {
 
     public init() {}
 
-    public func run() throws {
+    public func run() async throws {
         Backtrace.install()
 
         // Parse auth tokens
@@ -91,9 +91,9 @@ public struct PackageCollectionGenerate: ParsableCommand {
         let githubPackageMetadataProvider = GitHubPackageMetadataProvider(authTokens: authTokens)
 
         // Generate metadata for each package
-        let packages: [Model.Collection.Package] = input.packages.compactMap { package in
+        let packages: [Model.Collection.Package] = await input.packages.asyncMap { package in
             do {
-                let packageMetadata = try self.generateMetadata(for: package, metadataProvider: githubPackageMetadataProvider, jsonDecoder: jsonDecoder)
+                let packageMetadata = try await self.generateMetadata(for: package, metadataProvider: githubPackageMetadataProvider, jsonDecoder: jsonDecoder)
                 print("\(packageMetadata)", verbose: self.verbose)
 
                 guard !packageMetadata.versions.isEmpty else {
@@ -147,7 +147,7 @@ public struct PackageCollectionGenerate: ParsableCommand {
 
     private func generateMetadata(for package: PackageCollectionGeneratorInput.Package,
                                   metadataProvider: PackageMetadataProvider,
-                                  jsonDecoder: JSONDecoder) throws -> Model.Collection.Package {
+                                  jsonDecoder: JSONDecoder) async throws -> Model.Collection.Package {
         print("Processing Package(\(package.url))", inColor: .cyan, verbose: self.verbose)
 
         // Try to locate the directory where the repository might have been cloned to previously
@@ -207,7 +207,9 @@ public struct PackageCollectionGenerate: ParsableCommand {
                                   jsonDecoder: JSONDecoder) throws -> Model.Collection.Package {
         var additionalMetadata: PackageBasicMetadata?
         do {
-            additionalMetadata = try temp_await { callback in metadataProvider.get(package.url, callback: callback) }
+            try metadataProvider.get(package.url) { callback in 
+              additionalMetadata = callback.success
+            }
         } catch {
             printError("Failed to fetch additional metadata: \(error)")
         }
@@ -418,4 +420,16 @@ extension PackageCollectionModel.V1.ProductType.LibraryType {
             self = .automatic
         }
     }
+}
+
+extension Sequence {
+  func asyncMap<T>( _ transform: (Element) async throws -> Optional<T> ) async rethrows -> [T] {
+    var values = [T]()
+    for element in self {
+      if let element = try await transform(element) {
+        try values.append(element)
+      }
+    }
+    return values
+  }
 }
